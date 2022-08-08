@@ -4,6 +4,9 @@
 #include "user/user.h"
 
 
+
+
+
 void
 sinfo(struct sysinfo *info) {
   if (sysinfo(info) < 0) {
