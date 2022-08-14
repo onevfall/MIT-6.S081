@@ -16,7 +16,8 @@ void            brelse(struct buf*);
 void            bwrite(struct buf*);
 void            bpin(struct buf*);
 void            bunpin(struct buf*);
-
+// sysfile.c
+uint64          munmap(uint64, int);
 // console.c
 void            consoleinit(void);
 void            consoleintr(int);
@@ -171,6 +172,8 @@ int             copyout(pagetable_t, uint64, char *, uint64);
 int             copyin(pagetable_t, char *, uint64, uint64);
 int             copyinstr(pagetable_t, char *, uint64, uint64);
 
+
+struct file*    fileundup(struct file*);
 // plic.c
 void            plicinit(void);
 void            plicinithart(void);

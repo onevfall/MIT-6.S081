@@ -180,3 +180,13 @@ filewrite(struct file *f, uint64 addr, int n)
   return ret;
 }
 
+struct file*
+fileundup(struct file *f)
+{
+  acquire(&ftable.lock);
+  if(f->ref < 1)
+    panic("fileundup");
+  f->ref--;
+  release(&ftable.lock);
+  return f;
+}
