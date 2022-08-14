@@ -287,9 +287,11 @@ uint64
 sys_open(void)
 {
   char path[MAXPATH];
+  char sympath[MAXPATH];
   int fd, omode;
   struct file *f;
-  struct inode *ip;
+  struct inode *ip;         //稍后要传递给f->ip
+  struct inode* symip=0;    //这里要设置一个symip用来防止锁的混乱
   int n;
 
   if((n = argstr(0, path, MAXPATH)) < 0 || argint(1, &omode) < 0)
@@ -304,6 +306,7 @@ sys_open(void)
       return -1;
     }
   } else {
+      //printf("here2\n");
     if((ip = namei(path)) == 0){
       end_op();
       return -1;
@@ -315,12 +318,44 @@ sys_open(void)
       return -1;
     }
   }
+    //判断一下是不是符号链接；如果加了O_NOFOLLOW，则按照普通文件处理
+  if(!(omode & O_NOFOLLOW) && ip->type == T_SYMLINK)
+  {
+    int i=0;
+    //循环向下搜索，搜索到非符号链接文件为止；或者搜索深度达到10为止
+    while(ip->type==T_SYMLINK)
+    {
+      //printf("here\n");
+      if(readi(ip,0,(uint64)&sympath,0,MAXPATH)==-1)    //读取文件里的字符串，放在sympath里
+      {
+        iunlockput(ip);
+        end_op();
+        return -1;
+      }
+      iunlockput(ip);   //读取的ip可以释放了，记得ref减去1
+      if((symip = namei(sympath)) == 0) //根据sympath搜索相应inode，如果搜索失败则退出
+      {
+        end_op();
+        return -1;
+      }
+      i++;
+      if(i==10)
+      {
+        end_op();
+        return -1;
+      }
+      ip=symip; 
+      ilock(ip);        //给刚刚获取的inode加锁
+    }
+  }
+
 
   if(ip->type == T_DEVICE && (ip->major < 0 || ip->major >= NDEV)){
     iunlockput(ip);
     end_op();
     return -1;
   }
+    //printf("here3\n");
 
   if((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0){
     if(f)
@@ -350,6 +385,8 @@ sys_open(void)
 
   return fd;
 }
+
+
 
 uint64
 sys_mkdir(void)
@@ -483,4 +520,66 @@ sys_pipe(void)
     return -1;
   }
   return 0;
+}
+uint64 sys_symlink(void)
+{
+    char name[DIRSIZ], target[MAXPATH], path[MAXPATH];
+    struct inode *dp, *ip, *sym;
+    //ip指向target dp指向path的父目录
+    if(argstr(0, target, MAXPATH) < 0 || argstr(1, path, MAXPATH) < 0)
+        return -1;
+
+    begin_op();
+    if((ip = namei(target)) != 0) // 提示要求target指定的文件是可以不存在的
+    {
+        ilock(ip);
+
+        if(ip->type == T_DIR) // 根据提示，不需要处理target是一个目录文件的情况
+        {
+            iunlockput(ip);
+            end_op();
+            return -1;
+        }
+        iunlockput(ip);
+    }
+
+    if((dp = nameiparent(path, name)) == 0) //获取path的父目录
+    {
+        end_op();
+        return -1;
+    }
+
+    ilock(dp);
+    if((sym = dirlookup(dp, name, 0)) != 0)  //如果有同名文件，则生成失败
+    {
+        iunlockput(dp);
+        end_op();
+        return -1;
+    }
+
+    if((sym = ialloc(dp->dev, T_SYMLINK)) == 0)  //仿照create生成符号链接类型的inode
+        panic("create: ialloc");
+
+    ilock(sym);
+    sym->nlink = 1;
+    iupdate(sym);
+
+
+    if(dirlink(dp, name,sym->inum) < 0) //把符号链接文件加入到path的父目录中
+        panic("create: dirlink");
+
+    iupdate(dp);
+    //把target字符串写入符号链接文件里面
+    if(writei(sym, 0, (uint64)&target, 0, strlen(target)) != strlen(target))
+        panic("symlink: writei");
+
+    iupdate(sym);//注意调用iupdate把inode信息写入磁盘
+
+    iunlockput(dp);
+
+    iunlockput(sym);
+
+    end_op();
+    return 0;
+
 }
